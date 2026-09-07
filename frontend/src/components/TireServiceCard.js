@@ -5,7 +5,7 @@ import ServiceDropdowns from './ServiceDropdowns';
 import EditServiceModal from './EditServiceModal';
 import GroupRequestModal from './GroupRequestModal';
 import { db, storage } from '../firebase';
-import { collection, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import imageCompression from 'browser-image-compression';
 
@@ -19,7 +19,6 @@ export default function TireServiceCard({ role }) {
   const [newBatchId, setNewBatchId] = useState('');
   const [showApproveAction, setShowApproveAction] = useState(false);
 
-  // File states
   const [selectedPurchaseFile, setSelectedPurchaseFile] = useState(null);
   const [selectedProformaFile, setSelectedProformaFile] = useState(null);
 
@@ -74,6 +73,7 @@ export default function TireServiceCard({ role }) {
 
   useEffect(() => { fetchEntries(); }, []);
 
+  // ✅ This was missing before
   const handleUpdateStatus = async (batchId, requestId, status) => {
     if (!status) return;
     try {
@@ -102,26 +102,66 @@ export default function TireServiceCard({ role }) {
         await deleteDoc(doc(db, `customerServiceTracking/${batchId}/requests`, requestId));
         fetchEntries();
       } else if (action === 'group') {
-        setGroupingEntry(requestId);
+        setGroupingEntry({ batchId, id: requestId });
       }
     } catch (err) {
       console.error('Manage action failed:', err);
     }
   };
 
-  const handleAssignToBatch = async (batchId, requestId, newBatchId) => {
-    if (!newBatchId) return;
-    try {
-      await updateDoc(doc(db, `customerServiceTracking/${batchId}/requests`, requestId), {
-        billingBatchId: newBatchId
-      });
-      setGroupingEntry(null);
-      setNewBatchId('');
-      fetchEntries();
-    } catch (err) {
-      console.error('Assign to batch failed:', err);
+  const handleAssignToBatch = async (oldBatchId, requestId, newBatchId) => {
+  if (!newBatchId) return;
+
+  // Step 1: Confirm before transfer
+  const confirmed = window.confirm(
+    `Do you want to transfer request ${requestId} from batch ${oldBatchId} to ${newBatchId}?`
+  );
+  if (!confirmed) return;
+
+  try {
+    // Step 2: Get old request
+    const oldRef = doc(db, `customerServiceTracking/${oldBatchId}/requests`, requestId);
+    const snap = await getDoc(oldRef);
+    if (!snap.exists()) {
+      alert("❌ Request not found, transfer aborted.");
+      return;
     }
-  };
+    const requestData = snap.data();
+
+    // Step 3: Ensure new batch doc exists
+    const newBatchRef = doc(db, "customerServiceTracking", newBatchId);
+    const newBatchSnap = await getDoc(newBatchRef);
+    if (!newBatchSnap.exists()) {
+      await setDoc(newBatchRef, {
+        billingBatchId: newBatchId,
+        batchComplete: false,
+        createdAt: new Date(),
+        emailSent: false,
+      });
+    }
+
+        const newRequestRef = doc(collection(db, `customerServiceTracking/${newBatchId}/requests`));
+    await setDoc(newRequestRef, {
+      ...requestData,
+      billingBatchId: newBatchId,
+      timestamp: new Date(),
+    });
+
+    // Step 5: Delete old request
+    await deleteDoc(oldRef);
+
+    // Step 6: Reset state + refresh
+    setGroupingEntry(null);
+    setNewBatchId('');
+    fetchEntries();
+
+    // Step 7: Confirm success
+    alert(`✅ Request ${requestId} successfully moved to batch ${newBatchId}`);
+  } catch (err) {
+    console.error('Assign to batch failed:', err);
+    alert("❌ Transfer failed, check console for details.");
+  }
+};
 
   const handleAskFinalApproval = async (batchId) => {
     try {
@@ -142,10 +182,11 @@ export default function TireServiceCard({ role }) {
       await updateDoc(doc(db, "customerServiceTracking", batchId), {
         finalApproval: approved,
         status: approved ? "Finished" : "Rejected",
-        closedDate: new Date()
+        closedDate: new Date(),
+        completed: approved ? true : false
       });
       fetchEntries();
-      alert(`Batch ${batchId} has been ${approved ? "Final Approved" : "Rejected"}.`);
+      alert(`Batch ${batchId} has been ${approved ? "Final Approved & Completed" : "Rejected"}.`);
     } catch (err) {
       console.error("Final approval failed:", err);
     }
@@ -387,7 +428,7 @@ export default function TireServiceCard({ role }) {
         );
       })}
 
-      <EditServiceModal
+       <EditServiceModal
         editingEntry={editingEntry}
         editForm={editForm}
         setEditForm={setEditForm}
