@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
 export default function GroupRequestModal({
-  groupingEntry,
+  groupingEntry,        // { batchId, id }
   newBatchId,
   setNewBatchId,
   setGroupingEntry,
@@ -17,7 +17,7 @@ export default function GroupRequestModal({
       const snap = await getDocs(collection(db, 'customerServiceTracking'));
       const openBatches = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(b => b.status !== 'Finished' && b.status !== 'complete'); // only open batches
+        .filter(b => b.status !== 'Finished' && b.status !== 'complete');
       setBatchOptions(openBatches);
     };
     fetchBatches();
@@ -27,7 +27,6 @@ export default function GroupRequestModal({
 
   const handleAssign = () => {
     if (!newBatchId) return;
-    // 🔧 Pass batchId + requestId + newBatchId to parent handler
     handleAssignToBatch(groupingEntry.batchId, groupingEntry.id, newBatchId);
   };
 
@@ -59,7 +58,7 @@ export default function GroupRequestModal({
           <option value="">-- Select Batch --</option>
           {batchOptions.map(b => (
             <option key={b.id} value={b.id}>
-              {b.billingBatchId || b.id} {/* show billingBatchId if available */}
+              {b.billingBatchId || b.id}
             </option>
           ))}
         </select>
@@ -67,6 +66,7 @@ export default function GroupRequestModal({
         <label style={{ marginTop: '10px' }}>Or New Batch ID:</label>
         <input
           type="text"
+          placeholder="Enter new batch ID"
           value={newBatchId}
           onChange={(e) => setNewBatchId(e.target.value)}
           style={{ width: '100%', marginBottom: '10px' }}
