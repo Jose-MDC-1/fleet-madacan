@@ -177,20 +177,34 @@ export default function TireServiceCard({ role }) {
     }
   };
 
-  const handleFinalApproval = async (batchId, approved) => {
-    try {
-      await updateDoc(doc(db, "customerServiceTracking", batchId), {
+ const handleFinalApproval = async (batchId, approved) => {
+  try {
+    // Step 1: Update the batch doc
+    await updateDoc(doc(db, "customerServiceTracking", batchId), {
+      finalApproval: approved,
+      status: approved ? "Finished" : "Rejected",
+      closedDate: new Date(),
+      completed: approved ? true : false
+    });
+
+    // Step 2: Cascade update to all requests inside the batch
+    const requestsSnap = await getDocs(collection(db, `customerServiceTracking/${batchId}/requests`));
+    for (const req of requestsSnap.docs) {
+      await updateDoc(doc(db, `customerServiceTracking/${batchId}/requests`, req.id), {
         finalApproval: approved,
         status: approved ? "Finished" : "Rejected",
-        closedDate: new Date(),
-        completed: approved ? true : false
+        closedDate: new Date()
       });
-      fetchEntries();
-      alert(`Batch ${batchId} has been ${approved ? "Final Approved & Completed" : "Rejected"}.`);
-    } catch (err) {
-      console.error("Final approval failed:", err);
     }
-  };
+
+    // Step 3: Refresh + notify
+    fetchEntries();
+    alert(`✅ Batch ${batchId} and all its requests have been ${approved ? "Final Approved & Completed" : "Rejected"}.`);
+  } catch (err) {
+    console.error("Final approval failed:", err);
+    alert("❌ Final approval failed, check console for details.");
+  }
+};
 
   const handleScmApproveBatch = async (batchId) => {
     try {
@@ -248,185 +262,137 @@ export default function TireServiceCard({ role }) {
 
       <h4 style={{ marginTop: '30px', marginBottom: '16px', color: '#444' }}>📋 Tire Requests Grouped by Billing ID</h4>
       {entries.map(batch => {
-        const isExpanded = expandedBatch === batch.batchId;
-        const pendingCount = batch.requests.filter(r => r.scmApproval?.toLowerCase() === 'pending').length;
-                const allScmApproved = batch.requests.every(r => r.scmApproval?.toLowerCase() === 'approved');
-        const batchWaitingFinalApproval = batch.status === "WaitingFinalApproval";
-        const hasRequiredFiles = batch.purchaseFileUrl && batch.proformaFileUrl;
+  const isExpanded = expandedBatch === batch.batchId;
+  const pendingCount = batch.requests.filter(r => r.scmApproval?.toLowerCase() === 'pending').length;
+  const allScmApproved = batch.requests.every(r => r.scmApproval?.toLowerCase() === 'approved');
+  const batchWaitingFinalApproval = batch.status === "WaitingFinalApproval";
+  const hasRequiredFiles = batch.purchaseFileUrl && batch.proformaFileUrl;
 
-        return (
-          <div key={batch.batchId} style={{ marginBottom: '20px' }}>
-            <div
-              onClick={() => setExpandedBatch(isExpanded ? null : batch.batchId)}
-              style={{
-                backgroundColor: isExpanded ? '#0077cc' : '#f9fafb',
-                color: isExpanded ? 'white' : '#333',
-                padding: '12px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}
+  return (
+    <div key={batch.batchId} style={{ marginBottom: '20px' }}>
+      <div
+        onClick={() => setExpandedBatch(isExpanded ? null : batch.batchId)}
+        style={{
+          backgroundColor: isExpanded ? '#0077cc' : '#f9fafb',
+          color: isExpanded ? 'white' : '#333',
+          padding: '12px',
+          borderRadius: '8px',
+          cursor: 'pointer',
+          fontWeight: '600',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}
+      >
+        <span>
+          {isExpanded ? '▼' : '▶'} Billing Batch: {batch.billingBatchId} ({batch.requests.length} services)
+        </span>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Pending SCM approvals badge */}
+          {pendingCount > 0 && (
+            <span style={{
+              backgroundColor: '#ffcccc',
+              color: '#b71c1c',
+              padding: '3px 50px',
+              borderRadius: '12px',
+              fontWeight: 'bold',
+              animation: 'flash 1s infinite'
+            }}>
+              ⏳ {pendingCount} waiting SCM approval
+            </span>
+          )}
+
+          {/* SCM Approve All button */}
+          {role?.toLowerCase() === "scm" && pendingCount > 0 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleScmApproveBatch(batch.batchId); }}
+              style={{ background: '#0077cc', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
             >
-              <span>
-                {isExpanded ? '▼' : '▶'} Billing Batch: {batch.billingBatchId} ({batch.requests.length} services)
-              </span>
+              ✅ Approve All Requests
+            </button>
+          )}
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                {pendingCount > 0 && (
-                  <span style={{ backgroundColor: '#ffcccc', color: '#b71c1c', padding: '3px 50px', borderRadius: '12px', fontWeight: 'bold', animation: 'flash 1s infinite' }}>
-                    ⏳ {pendingCount} waiting SCM approval
-                  </span>
-                )}
+          {/* SCM Ask for Final Approval button */}
+          {role?.toLowerCase() === "scm" && allScmApproved && !batchWaitingFinalApproval && hasRequiredFiles && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleAskFinalApproval(batch.batchId); }}
+              style={{ background: '#ff9800', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
+            >
+              Ask for Final Approval
+            </button>
+          )}
 
-                {role?.toLowerCase() === "scm" && pendingCount > 0 && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleScmApproveBatch(batch.batchId); }}
-                    style={{ background: '#0077cc', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
-                  >
-                    ✅ Approve All Requests
-                  </button>
-                )}
+          {/* Waiting Final Approval badge */}
+          {batchWaitingFinalApproval && (
+            <span style={{
+              backgroundColor: '#fff3cd',
+              color: '#856404',
+              padding: '3px 50px',
+              borderRadius: '12px',
+              fontWeight: 'bold',
+              animation: 'flash 1s infinite'
+            }}>
+              ⏳ Waiting Final Approval
+            </span>
+          )}
 
-                {role?.toLowerCase() === "scm" && allScmApproved && !batchWaitingFinalApproval && hasRequiredFiles && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleAskFinalApproval(batch.batchId); }}
-                    style={{ background: '#ff9800', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
-                  >
-                    Ask for Final Approval
-                  </button>
-                )}
-              </div>
-            </div>
+          {/* Approval role buttons */}
+          {role?.toLowerCase() === "approval" && batchWaitingFinalApproval && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleFinalApproval(batch.batchId, true); }}
+                style={{ background: '#4caf50', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
+              >
+                ✅ Final Approve
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleFinalApproval(batch.batchId, false); }}
+                style={{ background: '#f44336', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
+              >
+                ❌ Reject
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
-            {isExpanded && (
-              <div style={{ padding: '12px', marginTop: '8px', backgroundColor: '#fcfcfc', borderRadius: '8px' }}>
-                
-                {/* Upload Purchase Request — only User, hide if already uploaded */}
-                {role?.toLowerCase() === "user" && !batch.purchaseFileUrl && (
-                  <div style={{ marginBottom: '12px' }}>
-                    <label>📄 Upload Purchase Request:</label>
-                    <input type="file" onChange={e => setSelectedPurchaseFile(e.target.files[0])} />
-                    <button onClick={async () => {
-                      if (!selectedPurchaseFile) return;
-                      await uploadCompressedFile(
-                        selectedPurchaseFile,
-                        "customerServiceTracking/purchase",
-                        batch.batchId,
-                        "purchaseFileUrl"
-                      );
-                      setSelectedPurchaseFile(null);
-                      fetchEntries();
-                    }}>
-                      Save Purchase Request
-                    </button>
-                  </div>
-                )}
+      {isExpanded && (
+        <div style={{ padding: '12px', marginTop: '8px', backgroundColor: '#fcfcfc', borderRadius: '8px' }}>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {batch.requests.map(entry => (
+              <li key={entry.id} style={{
+                border: '1px solid #eee',
+                borderRadius: '8px',
+                padding: '12px',
+                marginBottom: '10px',
+                backgroundColor: '#fff'
+              }}>
+                <strong>Plate:</strong> {entry.plate || 'N/A'} <br />
+                <strong>Driver:</strong> {entry.driverName || 'N/A'} <br />
+                <strong>Service Provider:</strong> {entry.serviceProvider || 'N/A'} <br />
+                <strong>Billing Batch ID:</strong> {batch.billingBatchId || 'UNASSIGNED'} <br />
+                <strong>SCM Approval:</strong> {entry.scmApproval || 'N/A'} <br />
+                <strong>Status:</strong> {entry.status || 'N/A'}
 
-                {/* Show uploaded Purchase Request file */}
-                {batch.purchaseFileUrl && (
-                  <div style={{ marginBottom: '12px', padding: '8px', backgroundColor: '#e8f5e9', borderRadius: '6px' }}>
-                    <strong>📄 Purchase Request Uploaded:</strong><br />
-                    <a href={batch.purchaseFileUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#0077cc' }}>
-                      View File
-                    </a>
-                  </div>
-                )}
+                <ServiceDropdowns
+                  entry={entry}
+                  role={role}
+                  dropdownStyle={dropdownStyle}
+                  handleUpdateStatus={handleUpdateStatus}
+                  handleManageAction={handleManageAction}
+                  fetchEntries={fetchEntries}
+                  batchId={batch.batchId}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+})}
 
-                {/* Upload Proforma/Invoice — only SCM, hide if already uploaded */}
-                {role?.toLowerCase() === "scm" && !batch.proformaFileUrl && (
-                  <div style={{ marginBottom: '12px' }}>
-                    <label>📑 Upload Proforma/Invoice:</label>
-                    <input type="file" onChange={e => setSelectedProformaFile(e.target.files[0])} />
-                    <button onClick={async () => {
-                      if (!selectedProformaFile) return;
-                      await uploadCompressedFile(
-                        selectedProformaFile,
-                        "customerServiceTracking/proforma",
-                        batch.batchId,
-                        "proformaFileUrl"
-                      );
-                      setSelectedProformaFile(null);
-                      fetchEntries();
-                    }}>
-                      Save Proforma/Invoice
-                    </button>
-                  </div>
-                )}
-
-                {/* Show uploaded Proforma/Invoice file */}
-                {batch.proformaFileUrl && (
-                  <div style={{ marginBottom: '12px', padding: '8px', backgroundColor: '#e3f2fd', borderRadius: '6px' }}>
-                    <strong>📑 Proforma/Invoice Uploaded:</strong><br />
-                    <a href={batch.proformaFileUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#0077cc' }}>
-                      View File
-                    </a>
-                  </div>
-                )}
-
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                  {batch.requests.map(entry => (
-                    <li
-                      key={entry.id}
-                      style={{
-                        border: '1px solid #eee',
-                        borderRadius: '8px',
-                        padding: '12px',
-                        marginBottom: '10px',
-                        backgroundColor: '#fff'
-                      }}
-                    >
-                      <strong>Plate:</strong> {entry.plate || 'N/A'} <br />
-                      <strong>Driver:</strong> {entry.driverName || 'N/A'} <br />
-                      <strong>Service Provider:</strong> {entry.serviceProvider || 'N/A'} <br />
-                      <strong>Billing Batch ID:</strong> {batch.billingBatchId || 'UNASSIGNED'} <br />
-                      <strong>SCM Approval:</strong>{' '}
-                      <span style={{
-                        fontWeight: '500',
-                        color:
-                          entry.scmApproval?.toLowerCase() === 'approved'
-                            ? '#4caf50'
-                            : entry.scmApproval?.toLowerCase() === 'rejected'
-                            ? '#f44336'
-                            : '#999'
-                      }}>
-                        ✔ {entry.scmApproval || 'N/A'}
-                      </span>
-                      <br />
-                      <strong>Status:</strong>{' '}
-                      <span style={{
-                        fontWeight: '500',
-                        color:
-                          entry.status === 'Finished'
-                            ? '#4caf50'
-                            : entry.status === 'Rejected'
-                            ? '#f44336'
-                            : entry.status === 'WaitingFinalApproval'
-                            ? '#ff9800'
-                            : '#999'
-                      }}>
-                        {entry.status || 'N/A'}
-                      </span>
-
-                      <ServiceDropdowns
-                        entry={entry}
-                        role={role}
-                        dropdownStyle={dropdownStyle}
-                        handleUpdateStatus={handleUpdateStatus}
-                        handleManageAction={handleManageAction}
-                        fetchEntries={fetchEntries}
-                        batchId={batch.batchId}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        );
-      })}
 
        <EditServiceModal
         editingEntry={editingEntry}
